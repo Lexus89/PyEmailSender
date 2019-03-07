@@ -1,1 +1,1 @@
-# PyEmailSender
+Python mass email sender with multiple attachments support
