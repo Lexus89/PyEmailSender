@@ -1,4 +1,5 @@
-#!/usr/local/bin/python3
+import argparse
+import glob
 
 """
 Email sender with attachment support
@@ -15,30 +16,48 @@ import sys
 COMMASPACE = ', '
 
 
-def send_message(dict_msg_attr):
-    if dict_msg_attr is None:
+def send_message(args):
+    if args is None:
         return False
 
-    username = dict_msg_attr["username"]
-    password = dict_msg_attr["password"]
-    smtp_host = dict_msg_attr["server"]
-    smtp_port = int(dict_msg_attr["port"])
-    smtp_ssl = bool(dict_msg_attr["ssl"])
-    recipients = dict_msg_attr["recipients"]
-    #message_plain = dict_msg_attr["message_plain"]
-    message_html = dict_msg_attr["message_html"]
+    smtp_host = args["host"]
+    smtp_port = int(args["port"])
+    smtp_ssl = bool(args["ssl"])
+    username = args["username"]
+    password = args["password"]
+    recipients_file = args["recipients_file"]
+    from_name = args["from_name"]
+    from_email = args["from_email"]
+    from_full = '{} <{}>'.format(from_name, from_email)
+    subject = args["subject"]
+    message_file = args["message_file"]
+    message_type = args["message_type"]
+    attachments_dir = args["attachments_dir"]
+
+    if not os.path.isfile(message_file):
+        return False
+
+    message_body = read_file(message_file)
+
+    if not os.path.isfile(recipients_file):
+        return False
+
+    recipients = read_file_lines(recipients_file)
 
     # Create the enclosing (outer) message
     outer = MIMEMultipart()
-    outer['Subject'] = dict_msg_attr["subject"]
+    outer['Subject'] = subject
     outer['To'] = COMMASPACE.join(recipients)
-    outer['From'] = dict_msg_attr["from"]
+    outer['From'] = from_full
     outer.preamble = 'You will not see this in a MIME-aware mail reader.\n'
 
     # List of attachments
-    attachments = dict_msg_attr["attachments"]
-    if attachments is not None:
-        for file in attachments:
+    attachments_path_list = None
+    if os.path.isdir(attachments_dir):
+        attachments_path_list = get_file_set_in_dir(attachments_dir, True)
+
+    if attachments_path_list is not None:
+        for file in attachments_path_list:
             try:
                 with open(file, 'rb') as fp:
                     msg = MIMEBase('application', "octet-stream")
@@ -50,8 +69,11 @@ def send_message(dict_msg_attr):
                 print("Unable to open one of the attachments. Error: ", sys.exc_info()[0])
                 raise
 
-    #outer.attach(MIMEText(message_plain, 'plain'))
-    outer.attach(MIMEText(message_html, 'html'))
+    if message_type == 'html':
+        outer.attach(MIMEText(message_body, 'html'))
+    else:
+        outer.attach(MIMEText(message_body, 'plain'))
+
     composed = outer.as_string()
 
     # send email
@@ -63,7 +85,7 @@ def send_message(dict_msg_attr):
                 server.ehlo()
 
             server.login(username, password)
-            server.sendmail(dict_msg_attr["from"], recipients, composed)
+            server.sendmail(from_full, recipients, composed)
 
             server.close()
             server.close()
@@ -85,29 +107,89 @@ def read_file_lines(file_path):
         return fp.readlines()
 
 
-#message_plain = read_file("/Users/moda/Desktop/Email_Template/message.txt")
-message_html = read_file("/home/cod/Email_Template/message.html")
-message_subject = "Billing statement for October"
-recipients = read_file_lines("/home/cod/Email_Template/recipients.txt")
+def get_file_set_in_dir(dir_path, files_only, filters=None):
+    """
+    Scan for files in a given directory path
+    :param dir_path: directory path
+    :param files_only: If set to False then will get files and directories list. True will get only files list in given directory path
+    :param filters: file extensions: example ['*', '*.*', '*.txt']
+    :return: Set of files that matches given filters
+    """
+    file_path_set = set()
+    if filters is None:
+        filters = ['*']
 
-# multiple attachments are supported
-attachments = ["/home/cod/Email_Template/billing.pdf"]
+    for f in filters:
+        for path in glob.glob(os.path.join(dir_path, f)):
+            if files_only:
+                if os.path.isfile(path):
+                    file_path_set.add(path)
+            else:
+                file_path_set.add(path)
+    return file_path_set
 
-for recipient in recipients:
-    dict_msg = {
-        "username": "email1@company.local",
-        "password": "123456",
-        "server": "smtp.gmail.com",
-        "port": 587,
-        "ssl": True,
-        "from": "Company Name <email1@company.local>",
-        "recipients": [recipient],
-        #"message_plain": message_plain,
-        "message_html": message_html,
-        "subject": message_subject,
-        "attachments": attachments
-    }
 
-    isSent = send_message(dict_msg)
-    if isSent:
-        print("Sent: {}".format(recipient), end='')
+def run(args):
+    try:
+        if not send_message(args):
+            print('[-] Could not send the message.')
+            arg_parser.print_help()
+    except Exception as e:
+        print('[-] ERROR: {}'.format(e))
+        arg_parser.print_help()
+
+    sys.exit(0)
+
+
+def generate_argparser():
+    ap = argparse.ArgumentParser()
+
+    ap.add_argument("-l", "--host", action='store',
+                    help="SMTP host IP/Domain")
+
+    ap.add_argument("-p", "--port", action='store', type=int, default=587,
+                    help="SMTP server port")
+
+    ap.add_argument("-s", "--ssl", action='store_true',
+                    help="SMTP server require SSL/TLS")
+
+    ap.add_argument("-u", "--username", action='store',
+                    help="SMTP account username")
+
+    ap.add_argument("-w", "--password", action='store',
+                    help="SMTP account password")
+
+    ap.add_argument("-e", "--from-email", action='store',
+                    help="Sender email")
+
+    ap.add_argument("-n", "--from-name", action='store',
+                    help="Sender name")
+
+    ap.add_argument("-r", "--recipients-file", action='store',
+                    help="Path to recipient(s) email(s) file. New line separated")
+
+    ap.add_argument("-b", "--subject", action='store',
+                    help="Message subject")
+
+    ap.add_argument("-m", "--message-file", action='store',
+                    help="Path to file containing the message")
+
+    ap.add_argument("-t", "--message-type", action='store', choices=['html', 'plain'],
+                    help="Message body type")
+
+    ap.add_argument("-i", "--attachments-dir", action='store',
+                    help="Path to a attachments directory. Files within specified path will be attached to the message.")
+
+
+    return ap
+
+
+def main():
+    global arg_parser
+    arg_parser = generate_argparser()
+    args = vars(arg_parser.parse_args())
+    run(args)
+
+
+if __name__ == "__main__":
+    main()
